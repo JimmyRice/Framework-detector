@@ -33,9 +33,22 @@
 		B6B0F1532FDB9BA900DDA500 /* Framework detectorUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "Framework detectorUITests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		B6B0F1802FDC006F00DDA500 /* Exceptions for "Framework detector" folder in "Framework detector" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				"Framework-detector-Info.plist",
+			);
+			target = B6B0F1392FDB9BA700DDA500 /* Framework detector */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		B6B0F13C2FDB9BA700DDA500 /* Framework detector */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				B6B0F1802FDC006F00DDA500 /* Exceptions for "Framework detector" folder in "Framework detector" target */,
+			);
 			path = "Framework detector";
 			sourceTree = "<group>";
 		};
@@ -413,6 +426,7 @@
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "Framework-detector-Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = "Framework - Detector";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
@@ -449,6 +463,7 @@
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "Framework-detector-Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = "Framework - Detector";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
