@@ -7,6 +7,7 @@ final class AppScanner: ObservableObject {
     @Published var isScanning = false
     @Published var statusMessage = ""
     @Published var hasScanned = false
+    @Published var needsPermission = false
 
     private var scanTask: Task<Void, Never>?
 
@@ -15,7 +16,8 @@ final class AppScanner: ObservableObject {
         apps = []
         isScanning = true
         hasScanned = true
-        statusMessage = "准备扫描..."
+        needsPermission = false
+        statusMessage = String(localized: "Preparing to scan...")
 
         scanTask = Task {
             var result: [AppInfo] = []
@@ -29,7 +31,7 @@ final class AppScanner: ObservableObject {
 
             for dir in appDirs {
                 guard !Task.isCancelled else { break }
-                self.statusMessage = "正在扫描 \(dir.path)..."
+                self.statusMessage = String(localized: "Scanning \(dir.path)...")
                 let p = dir.path; let s = dir.isSystem
                 let found = await Task.detached(priority: .userInitiated) {
                     AppScanner.scanApps(in: p, isSystem: s)
@@ -38,19 +40,27 @@ final class AppScanner: ObservableObject {
                 self.apps = result
             }
 
-            // ── 2. Homebrew ─────────────────────────────────────────────────
+            // ── 2. Check package manager permissions ────────────────────────
             guard !Task.isCancelled else { self.finish(result); return }
-            self.statusMessage = "正在扫描 Homebrew 软件包..."
+            let permDenied = await Task.detached(priority: .userInitiated) {
+                AppScanner.checkPackageManagerAccess()
+            }.value
+            if permDenied { self.needsPermission = true }
+
+            // ── 3. Homebrew ─────────────────────────────────────────────────
+            guard !Task.isCancelled else { self.finish(result); return }
+            self.statusMessage = String(localized: "Scanning Homebrew packages...")
             let brewItems = await Task.detached(priority: .userInitiated) {
-                AppScanner.scanHomebrewCellar(at: "/usr/local/Cellar",    source: .homebrew) +
-                AppScanner.scanHomebrewCellar(at: "/opt/homebrew/Cellar", source: .homebrew)
+                // Scan the prefix bin/ dir — symlinks here fully resolve to the actual Mach-O
+                AppScanner.scanHomebrewBin(prefix: "/usr/local") +
+                AppScanner.scanHomebrewBin(prefix: "/opt/homebrew")
             }.value
             result.append(contentsOf: brewItems)
             self.apps = result
 
-            // ── 3. MacPorts ─────────────────────────────────────────────────
+            // ── 4. MacPorts ─────────────────────────────────────────────────
             guard !Task.isCancelled else { self.finish(result); return }
-            self.statusMessage = "正在扫描 MacPorts 软件包..."
+            self.statusMessage = String(localized: "Scanning MacPorts packages...")
             let macportsItems = await Task.detached(priority: .userInitiated) {
                 AppScanner.scanMacPorts()
             }.value
@@ -64,7 +74,7 @@ final class AppScanner: ObservableObject {
     func cancelScan() {
         scanTask?.cancel()
         isScanning = false
-        statusMessage = "扫描已取消"
+        statusMessage = String(localized: "Scan cancelled")
     }
 
     private func finish(_ result: [AppInfo]) {
@@ -73,8 +83,8 @@ final class AppScanner: ObservableObject {
         let apps   = result.filter { $0.source == .application }.count
         let pkgs   = result.count - apps
         statusMessage = pkgs > 0
-            ? "共 \(apps) 个应用 · \(pkgs) 个软件包 · \(intel) 个 Intel"
-            : "共 \(apps) 个应用 · \(intel) 个 Intel"
+            ? String(localized: "\(apps) Apps · \(pkgs) Packages · \(intel) Intel")
+            : String(localized: "\(apps) Apps · \(intel) Intel")
     }
 
     // MARK: - Background workers (nonisolated → safe to call from Task.detached)
@@ -87,58 +97,93 @@ final class AppScanner: ObservableObject {
             .compactMap { AppInfo.create(from: directory + "/" + $0, isSystemApp: isSystem) }
     }
 
-    nonisolated static func scanHomebrewCellar(at cellarPath: String, source: ItemSource) -> [AppInfo] {
+    /// Scans <prefix>/bin/ and resolves every symlink chain with resolvingSymlinksInPath()
+    /// so we always read the actual Mach-O, not an intermediate symlink.
+    /// Only keeps entries whose canonical path falls under <prefix>/Cellar/ (i.e. true
+    /// Homebrew packages), and deduplicates by formula name.
+    nonisolated static func scanHomebrewBin(prefix: String) -> [AppInfo] {
         let fm = FileManager.default
+        let cellarPath = prefix + "/Cellar"
+        let binPath    = prefix + "/bin"
+
         guard fm.fileExists(atPath: cellarPath),
-              let formulas = try? fm.contentsOfDirectory(atPath: cellarPath) else { return [] }
+              let entries = try? fm.contentsOfDirectory(atPath: binPath) else { return [] }
 
-        return formulas
-            .filter { !$0.hasPrefix(".") }
-            .sorted()
-            .compactMap { formula -> AppInfo? in
-                let formulaDir = cellarPath + "/" + formula
+        var seenFormulas = Set<String>()
+        var results: [AppInfo] = []
 
-                // Pick the most-recently-installed version
-                guard let versions = try? fm.contentsOfDirectory(atPath: formulaDir),
-                      let version  = versions.filter({ !$0.hasPrefix(".") }).sorted().last else { return nil }
+        for entry in entries.filter({ !$0.hasPrefix(".") }).sorted() {
+            let linkPath = binPath + "/" + entry
 
-                let versionDir = formulaDir + "/" + version
+            // Recursively resolve all symlink hops (e.g. bin/git → Cellar/git/2.x/bin/git → libexec/…/git)
+            let realPath = URL(fileURLWithPath: linkPath).resolvingSymlinksInPath().path
 
-                // Search bin/ then sbin/ for the first Mach-O binary
-                for subdir in ["bin", "sbin"] {
-                    let binDir = versionDir + "/" + subdir
-                    guard let entries = try? fm.contentsOfDirectory(atPath: binDir) else { continue }
-                    let candidates = entries.filter { !$0.hasPrefix(".") }.sorted()
-                    for candidate in candidates {
-                        let execPath = binDir + "/" + candidate
-                        if let item = AppInfo.makePackage(
-                            name: formula,
-                            displayPath: versionDir,
-                            executablePath: execPath,
-                            source: source
-                        ) { return item }
-                    }
-                }
-                return nil
+            // Skip binaries that don't live inside this Homebrew's Cellar
+            let cellarPrefix = cellarPath + "/"
+            guard realPath.hasPrefix(cellarPrefix) else { continue }
+
+            // Extract formula name — first path component after "Cellar/"
+            let afterCellar  = String(realPath.dropFirst(cellarPrefix.count))
+            let formulaName  = String(afterCellar.prefix(while: { $0 != "/" }))
+            guard !formulaName.isEmpty, !seenFormulas.contains(formulaName) else { continue }
+
+            if let item = AppInfo.makePackage(
+                name: formulaName,
+                displayPath: realPath,
+                executablePath: realPath,
+                source: .homebrew
+            ) {
+                seenFormulas.insert(formulaName)
+                results.append(item)
             }
+        }
+        return results
+    }
+
+    /// Returns true if a package manager directory exists on disk but cannot be listed —
+    /// which means the app is sandboxed and needs Full Disk Access.
+    nonisolated static func checkPackageManagerAccess() -> Bool {
+        let fm = FileManager.default
+        let candidates = [
+            "/opt/homebrew/bin",
+            "/usr/local/Cellar",
+            "/opt/local/bin",
+        ]
+        return candidates.contains { path in
+            fm.fileExists(atPath: path) &&
+            (try? fm.contentsOfDirectory(atPath: path)) == nil
+        }
     }
 
     nonisolated static func scanMacPorts() -> [AppInfo] {
-        let binPath = "/opt/local/bin"
+        let macportsRoot = "/opt/local"
+        let binPath      = macportsRoot + "/bin"
         let fm = FileManager.default
-        guard fm.fileExists(atPath: binPath),
+
+        // Use presence of the `port` binary as the MacPorts installation indicator
+        guard fm.fileExists(atPath: binPath + "/port"),
               let entries = try? fm.contentsOfDirectory(atPath: binPath) else { return [] }
 
-        return entries
-            .filter { !$0.hasPrefix(".") }
-            .sorted()
-            .compactMap { binary in
-                AppInfo.makePackage(
-                    name: binary,
-                    displayPath: binPath,
-                    executablePath: binPath + "/" + binary,
-                    source: .macports
-                )
+        var seenRealPaths = Set<String>()
+        var results: [AppInfo] = []
+
+        for entry in entries.filter({ !$0.hasPrefix(".") }).sorted() {
+            let filePath = binPath + "/" + entry
+            let realPath = URL(fileURLWithPath: filePath).resolvingSymlinksInPath().path
+
+            // Deduplicate — different names may resolve to the same binary (e.g. python3 & python3.12)
+            guard !seenRealPaths.contains(realPath) else { continue }
+            seenRealPaths.insert(realPath)
+
+            if let item = AppInfo.makePackage(
+                name: entry,
+                displayPath: realPath,
+                executablePath: realPath,
+                source: .macports
+            ) {
+                results.append(item)
             }
+        }
+        return results
     }
 }
