@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
 	<key>SUFeedURL</key>
-	<string>https://fd.seamain.org/Framework-detector/appcast.xml</string>
+	<string>https://fd.seamain.org/appcast.xml</string>
 	<key>SUPublicEDKey</key>
 	<string>sigxAAP8O5DJAIfx6zmWt2TlArBQhk1MOK8KqJdcSTg=</string>
 </dict>
