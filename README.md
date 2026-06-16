@@ -29,7 +29,7 @@ Framework Detector is a powerful and elegant macOS application built with SwiftU
 
 1. Clone this repository:
    ```bash
-   git clone https://github.com/YourUsername/FrameworkDetector.git
+   git clone https://github.com/Seamain/Framework-detector.git
    ```
 2. Open `Framework detector.xcodeproj` in Xcode 15 or later.
 3. Ensure the target device is set to **My Mac**.
