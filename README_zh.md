@@ -29,7 +29,7 @@
 
 1. 克隆此代码仓库:
    ```bash
-   git clone https://github.com/YourUsername/FrameworkDetector.git
+   git clone https://github.com/Seamain/Framework-detector.git
    ```
 2. 在 Xcode 15 或更高版本中打开 `Framework detector.xcodeproj`。
 3. 确保你的目标设备（Target Device）选择的是 **My Mac**。
