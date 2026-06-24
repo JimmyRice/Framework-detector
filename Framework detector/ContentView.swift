@@ -169,7 +169,9 @@ struct ContentView: View {
                     Text("Architecture").tag(false)
                 }
                 .pickerStyle(.segmented)
-                .frame(width: 140)
+                .fixedSize(horizontal: true, vertical: false)
+                .layoutPriority(1)
+                .clipShape(RoundedRectangle(cornerRadius: 6))
             }
         }
     }
