@@ -44,17 +44,17 @@ struct AboutView: View {
                 .buttonStyle(.borderedProminent)
                 
                 Button("Project Homepage") {
-                    if let url = URL(string: "https://github.com") {
+                    if let url = URL(string: "https://github.com/Seamain/Framework-detector") {
                         NSWorkspace.shared.open(url)
                     }
                 }
             }
             .padding(.top, 8)
             
-            Text("Copyright © 2026. All rights reserved.")
-                .font(.caption2)
-                .foregroundColor(.secondary)
-                .padding(.top, 10)
+//            Text("Copyright © 2026. All rights reserved.")
+//                .font(.caption2)
+//                .foregroundColor(.secondary)
+//                .padding(.top, 10)
         }
         .padding(40)
         .frame(width: 400)
