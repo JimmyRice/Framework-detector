@@ -38,6 +38,11 @@ struct AppInfo: Identifiable, Sendable {
     let isSystemApp: Bool
     let source: ItemSource
 
+    // Set during scan if a Homebrew Cask install is detected for this app.
+    var caskName: String? = nil
+    // Set during scan if the app's Info.plist exposes a Sparkle feed URL.
+    var sparkleURL: URL? = nil
+
     var archCategory: ArchCategory {
         let hasIntel = architectures.contains(.x86_64) || architectures.contains(.i386)
         let hasARM   = architectures.contains(.arm64)  || architectures.contains(.arm)
@@ -45,6 +50,12 @@ struct AppInfo: Identifiable, Sendable {
         if hasIntel { return .intel }
         if hasARM   { return .applesilicon }
         return .unknown
+    }
+
+    // Detects App Store apps by the presence of a MAS receipt inside the bundle.
+    var isAppStoreApp: Bool {
+        guard source == .application else { return false }
+        return FileManager.default.fileExists(atPath: bundlePath + "/Contents/_MASReceipt/receipt")
     }
 
     // Factory for .app bundles
