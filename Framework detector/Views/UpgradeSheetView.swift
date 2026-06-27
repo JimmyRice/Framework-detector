@@ -114,15 +114,13 @@ struct UpgradeSheetView: View {
                     .lineLimit(1).truncationMode(.middle)
             }
             Spacer()
-            if let url = app.homepageURL {
-                Button {
-                    NSWorkspace.shared.open(url)
-                } label: {
-                    Label("Website", systemImage: "safari")
-                }
-                .buttonStyle(.bordered).controlSize(.small)
-                .help("Visit official website")
+            Button {
+                NSWorkspace.shared.open(app.homepageURL)
+            } label: {
+                Label("Website", systemImage: "safari")
             }
+            .buttonStyle(.bordered).controlSize(.small)
+            .help("Visit official website")
             Button {
                 NSWorkspace.shared.selectFile(app.bundlePath, inFileViewerRootedAtPath: "")
             } label: {
