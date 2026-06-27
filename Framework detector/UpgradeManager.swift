@@ -100,7 +100,7 @@ final class UpgradeManager: ObservableObject {
             return await replaceBrewFormula(item)
         }
         if let cask = item.caskName {
-            return await replaceBrewCask(cask)
+            return await replaceBrewCask(item, cask: cask)
         }
         if let feedURL = item.sparkleURL {
             return await runSparkleUpgrade(item: item, feedURL: feedURL)
@@ -116,7 +116,10 @@ final class UpgradeManager: ObservableObject {
             output += "  Removing Intel version from /usr/local...\n"
             _ = await runBrewStreaming(["uninstall", "--ignore-dependencies", item.name], bin: Self.intelBrewPath)
             output += "  Installing ARM version via /opt/homebrew...\n"
-            return await runBrewStreaming(["install", item.name], bin: Self.armBrewPath)
+            let alreadyInARM = FileManager.default.fileExists(
+                atPath: "/opt/homebrew/Cellar/" + item.name)
+            let cmd = alreadyInARM ? "reinstall" : "install"
+            return await runBrewStreaming([cmd, item.name], bin: Self.armBrewPath)
         }
 
         if isIntelPrefix {
@@ -128,14 +131,19 @@ final class UpgradeManager: ObservableObject {
         return await runBrewStreaming(["reinstall", item.name], bin: Self.armBrewPath)
     }
 
-    private func replaceBrewCask(_ cask: String) async -> Bool {
+    private func replaceBrewCask(_ item: AppInfo, cask: String) async -> Bool {
+        await quitRunningApp(named: item.name)
+
         let isIntelCask = FileManager.default.fileExists(atPath: "/usr/local/Caskroom/" + cask)
 
         if isIntelCask && armBrewAvailable {
             output += "  Removing Intel cask from /usr/local...\n"
             _ = await runBrewStreaming(["uninstall", "--ignore-dependencies", "--cask", cask], bin: Self.intelBrewPath)
             output += "  Installing ARM cask via /opt/homebrew...\n"
-            return await runBrewStreaming(["install", "--cask", cask], bin: Self.armBrewPath)
+            let alreadyInARM = FileManager.default.fileExists(
+                atPath: "/opt/homebrew/Caskroom/" + cask)
+            let cmd = alreadyInARM ? "reinstall" : "install"
+            return await runBrewStreaming([cmd, "--cask", cask], bin: Self.armBrewPath)
         }
 
         if isIntelCask {
@@ -145,6 +153,30 @@ final class UpgradeManager: ObservableObject {
 
         output += "  Reinstalling cask via ARM Homebrew...\n"
         return await runBrewStreaming(["reinstall", "--cask", cask], bin: Self.armBrewPath)
+    }
+
+    private func quitRunningApp(named appName: String) async {
+        let running = NSWorkspace.shared.runningApplications.filter {
+            $0.localizedName == appName
+        }
+        guard !running.isEmpty else { return }
+
+        output += "  Quitting \(appName)...\n"
+        for app in running { app.terminate() }
+
+        for _ in 0..<10 {
+            try? await Task.sleep(for: .milliseconds(500))
+            let still = NSWorkspace.shared.runningApplications.filter {
+                $0.localizedName == appName && !$0.isTerminated
+            }
+            if still.isEmpty { return }
+        }
+
+        for app in NSWorkspace.shared.runningApplications where
+            app.localizedName == appName && !app.isTerminated {
+            app.forceTerminate()
+        }
+        try? await Task.sleep(for: .seconds(1))
     }
 
     // MARK: - Homebrew (streaming runner)

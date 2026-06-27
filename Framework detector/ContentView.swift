@@ -154,7 +154,7 @@ struct ContentView: View {
                     Text("Name").tag(true)
                     Text("Architecture").tag(false)
                 }
-                .pickerStyle(.segmented).frame(width: 140)
+                .pickerStyle(.segmented).frame(width: 200)
             }
         }
         .sheet(isPresented: $showUpgradeSheet) {

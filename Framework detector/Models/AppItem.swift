@@ -52,6 +52,17 @@ struct AppInfo: Identifiable, Sendable {
         return .unknown
     }
 
+    var homepageURL: URL? {
+        guard let bundle = Bundle(path: bundlePath),
+              let id = bundle.bundleIdentifier else { return nil }
+        let parts = id.split(separator: ".").map(String.init)
+        guard parts.count >= 2 else { return nil }
+        let tld = parts[0].lowercased()
+        let domain = parts[1].lowercased()
+        guard ["com", "org", "net", "io", "dev", "app", "me", "co"].contains(tld) else { return nil }
+        return URL(string: "https://www.\(domain).\(tld)")
+    }
+
     // Detects App Store apps by the presence of a MAS receipt inside the bundle.
     var isAppStoreApp: Bool {
         guard source == .application else { return false }
