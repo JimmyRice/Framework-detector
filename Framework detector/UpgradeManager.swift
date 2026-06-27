@@ -88,16 +88,19 @@ final class UpgradeManager: ObservableObject {
         }
     }
 
+    private static let armBrewPath   = "/opt/homebrew/bin/brew"
+    private static let intelBrewPath = "/usr/local/bin/brew"
+
+    private var armBrewAvailable: Bool {
+        FileManager.default.fileExists(atPath: Self.armBrewPath)
+    }
+
     private func upgradeItem(_ item: AppInfo) async -> Bool {
         if item.source == .homebrew {
-            guard let bin = brewFormulaBin(for: item) else {
-                output += "  Error: brew not found\n"; return false
-            }
-            return await runBrewStreaming(["upgrade", item.name], bin: bin)
+            return await replaceBrewFormula(item)
         }
         if let cask = item.caskName {
-            let bin = brewCaskBin(cask: cask)
-            return await runBrewStreaming(["upgrade", "--cask", cask], bin: bin)
+            return await replaceBrewCask(cask)
         }
         if let feedURL = item.sparkleURL {
             return await runSparkleUpgrade(item: item, feedURL: feedURL)
@@ -105,7 +108,46 @@ final class UpgradeManager: ObservableObject {
         return false
     }
 
-    // MARK: - Homebrew (formula + cask)
+    private func replaceBrewFormula(_ item: AppInfo) async -> Bool {
+        let path = item.executablePath ?? item.bundlePath
+        let isIntelPrefix = path.contains("/usr/local/Cellar/")
+
+        if isIntelPrefix && armBrewAvailable {
+            output += "  Removing Intel version from /usr/local...\n"
+            _ = await runBrewStreaming(["uninstall", "--ignore-dependencies", item.name], bin: Self.intelBrewPath)
+            output += "  Installing ARM version via /opt/homebrew...\n"
+            return await runBrewStreaming(["install", item.name], bin: Self.armBrewPath)
+        }
+
+        if isIntelPrefix {
+            output += "  ⚠ ARM Homebrew (/opt/homebrew) not found — upgrade only\n"
+            return await runBrewStreaming(["upgrade", item.name], bin: Self.intelBrewPath)
+        }
+
+        output += "  Reinstalling via ARM Homebrew...\n"
+        return await runBrewStreaming(["reinstall", item.name], bin: Self.armBrewPath)
+    }
+
+    private func replaceBrewCask(_ cask: String) async -> Bool {
+        let isIntelCask = FileManager.default.fileExists(atPath: "/usr/local/Caskroom/" + cask)
+
+        if isIntelCask && armBrewAvailable {
+            output += "  Removing Intel cask from /usr/local...\n"
+            _ = await runBrewStreaming(["uninstall", "--ignore-dependencies", "--cask", cask], bin: Self.intelBrewPath)
+            output += "  Installing ARM cask via /opt/homebrew...\n"
+            return await runBrewStreaming(["install", "--cask", cask], bin: Self.armBrewPath)
+        }
+
+        if isIntelCask {
+            output += "  ⚠ ARM Homebrew (/opt/homebrew) not found — upgrade only\n"
+            return await runBrewStreaming(["upgrade", "--cask", cask], bin: Self.intelBrewPath)
+        }
+
+        output += "  Reinstalling cask via ARM Homebrew...\n"
+        return await runBrewStreaming(["reinstall", "--cask", cask], bin: Self.armBrewPath)
+    }
+
+    // MARK: - Homebrew (streaming runner)
 
     private func runBrewStreaming(_ args: [String], bin: String) async -> Bool {
         return await withCheckedContinuation { continuation in
@@ -138,20 +180,6 @@ final class UpgradeManager: ObservableObject {
                 continuation.resume(returning: false)
             }
         }
-    }
-
-    private func brewFormulaBin(for item: AppInfo) -> String? {
-        let path = item.executablePath ?? item.bundlePath
-        if path.contains("/usr/local/Cellar/")    { return "/usr/local/bin/brew" }
-        if path.contains("/opt/homebrew/Cellar/") { return "/opt/homebrew/bin/brew" }
-        return nil
-    }
-
-    private func brewCaskBin(cask: String) -> String {
-        let fm = FileManager.default
-        if fm.fileExists(atPath: "/opt/homebrew/Caskroom/" + cask) { return "/opt/homebrew/bin/brew" }
-        if fm.fileExists(atPath: "/usr/local/Caskroom/" + cask)    { return "/usr/local/bin/brew" }
-        return "/opt/homebrew/bin/brew"
     }
 
     // MARK: - Sparkle
