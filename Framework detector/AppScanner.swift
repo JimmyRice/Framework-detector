@@ -40,6 +40,34 @@ final class AppScanner: ObservableObject {
                 self.apps = result
             }
 
+            // ── 1.5. Detect Homebrew Casks and Sparkle feed URLs ────────────
+            guard !Task.isCancelled else { self.finish(result); return }
+            self.statusMessage = String(localized: "Detecting Cask apps and Sparkle feeds...")
+            let caskMap = await Task.detached(priority: .userInitiated) {
+                AppScanner.buildCaskMap(prefix: "/usr/local")
+                    .merging(AppScanner.buildCaskMap(prefix: "/opt/homebrew")) { _, new in new }
+            }.value
+
+            let snapshot = result
+            let enriched = await Task.detached(priority: .userInitiated) {
+                snapshot.map { app -> AppInfo in
+                    guard app.source == .application else { return app }
+                    var updated = app
+                    if let cask = AppScanner.matchCask(appName: app.name, in: caskMap) {
+                        updated.caskName = cask
+                    }
+                    // Only set Sparkle URL if not App Store and not Cask (prefer Cask upgrade)
+                    let hasReceipt = FileManager.default.fileExists(
+                        atPath: app.bundlePath + "/Contents/_MASReceipt/receipt")
+                    if !hasReceipt, updated.caskName == nil {
+                        updated.sparkleURL = AppScanner.extractSparkleURL(for: app.bundlePath)
+                    }
+                    return updated
+                }
+            }.value
+            result = enriched
+            self.apps = result
+
             // ── 2. Check package manager permissions ────────────────────────
             guard !Task.isCancelled else { self.finish(result); return }
             let permDenied = await Task.detached(priority: .userInitiated) {
@@ -51,7 +79,6 @@ final class AppScanner: ObservableObject {
             guard !Task.isCancelled else { self.finish(result); return }
             self.statusMessage = String(localized: "Scanning Homebrew packages...")
             let brewItems = await Task.detached(priority: .userInitiated) {
-                // Scan the prefix bin/ dir — symlinks here fully resolve to the actual Mach-O
                 AppScanner.scanHomebrewBin(prefix: "/usr/local") +
                 AppScanner.scanHomebrewBin(prefix: "/opt/homebrew")
             }.value
@@ -97,10 +124,32 @@ final class AppScanner: ObservableObject {
             .compactMap { AppInfo.create(from: directory + "/" + $0, isSystemApp: isSystem) }
     }
 
-    /// Scans <prefix>/bin/ and resolves every symlink chain with resolvingSymlinksInPath()
-    /// so we always read the actual Mach-O, not an intermediate symlink.
-    /// Only keeps entries whose canonical path falls under <prefix>/Cellar/ (i.e. true
-    /// Homebrew packages), and deduplicates by formula name.
+    /// Builds a [normalizedAppName: caskName] map by listing the Caskroom directory.
+    /// Key is the cask name with hyphens replaced by spaces and lowercased, e.g.
+    /// "google-chrome" → key "google chrome".
+    nonisolated static func buildCaskMap(prefix: String) -> [String: String] {
+        let caskroomPath = prefix + "/Caskroom"
+        guard let entries = try? FileManager.default.contentsOfDirectory(atPath: caskroomPath) else { return [:] }
+        var map: [String: String] = [:]
+        for entry in entries where !entry.hasPrefix(".") {
+            let key = entry.lowercased().replacingOccurrences(of: "-", with: " ")
+            map[key] = entry
+        }
+        return map
+    }
+
+    nonisolated static func matchCask(appName: String, in map: [String: String]) -> String? {
+        map[appName.lowercased()]
+    }
+
+    /// Reads SUFeedURL from the app's Info.plist (Sparkle update feed URL).
+    nonisolated static func extractSparkleURL(for bundlePath: String) -> URL? {
+        guard let bundle = Bundle(path: bundlePath),
+              let urlStr = bundle.infoDictionary?["SUFeedURL"] as? String
+        else { return nil }
+        return URL(string: urlStr)
+    }
+
     nonisolated static func scanHomebrewBin(prefix: String) -> [AppInfo] {
         let fm = FileManager.default
         let cellarPath = prefix + "/Cellar"
@@ -114,15 +163,11 @@ final class AppScanner: ObservableObject {
 
         for entry in entries.filter({ !$0.hasPrefix(".") }).sorted() {
             let linkPath = binPath + "/" + entry
-
-            // Recursively resolve all symlink hops (e.g. bin/git → Cellar/git/2.x/bin/git → libexec/…/git)
             let realPath = URL(fileURLWithPath: linkPath).resolvingSymlinksInPath().path
 
-            // Skip binaries that don't live inside this Homebrew's Cellar
             let cellarPrefix = cellarPath + "/"
             guard realPath.hasPrefix(cellarPrefix) else { continue }
 
-            // Extract formula name — first path component after "Cellar/"
             let afterCellar  = String(realPath.dropFirst(cellarPrefix.count))
             let formulaName  = String(afterCellar.prefix(while: { $0 != "/" }))
             guard !formulaName.isEmpty, !seenFormulas.contains(formulaName) else { continue }
@@ -140,15 +185,9 @@ final class AppScanner: ObservableObject {
         return results
     }
 
-    /// Returns true if a package manager directory exists on disk but cannot be listed —
-    /// which means the app is sandboxed and needs Full Disk Access.
     nonisolated static func checkPackageManagerAccess() -> Bool {
         let fm = FileManager.default
-        let candidates = [
-            "/opt/homebrew/bin",
-            "/usr/local/Cellar",
-            "/opt/local/bin",
-        ]
+        let candidates = ["/opt/homebrew/bin", "/usr/local/Cellar", "/opt/local/bin"]
         return candidates.contains { path in
             fm.fileExists(atPath: path) &&
             (try? fm.contentsOfDirectory(atPath: path)) == nil
@@ -160,7 +199,6 @@ final class AppScanner: ObservableObject {
         let binPath      = macportsRoot + "/bin"
         let fm = FileManager.default
 
-        // Use presence of the `port` binary as the MacPorts installation indicator
         guard fm.fileExists(atPath: binPath + "/port"),
               let entries = try? fm.contentsOfDirectory(atPath: binPath) else { return [] }
 
@@ -171,7 +209,6 @@ final class AppScanner: ObservableObject {
             let filePath = binPath + "/" + entry
             let realPath = URL(fileURLWithPath: filePath).resolvingSymlinksInPath().path
 
-            // Deduplicate — different names may resolve to the same binary (e.g. python3 & python3.12)
             guard !seenRealPaths.contains(realPath) else { continue }
             seenRealPaths.insert(realPath)
 
